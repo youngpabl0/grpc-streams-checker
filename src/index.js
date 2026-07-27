@@ -40,7 +40,7 @@ async function runOnce(cfg) {
   const streams = cfg.streams.filter((s) => !only || only.has(s.name));
 
   const results = await Promise.all(streams.map(async (s) => {
-    const labels = { stream: s.name, addr: s.addr || cfg.addr, dc: cfg.dc };
+    const labels = { stream: s.name, method: s.method, addr: s.addr || cfg.addr, dc: cfg.dc };
     const out = await checkStream(s, {
       addr: cfg.addr,
       tls: cfg.tls,

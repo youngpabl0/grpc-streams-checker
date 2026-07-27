@@ -1,0 +1,35 @@
+# Copyright 2026 Daniil Romashov
+# SPDX-License-Identifier: Apache-2.0
+#
+# For prometheus-operator setups: scrape the checker via ServiceMonitor and load
+# the shipped alert rules as a PrometheusRule.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: grpc-streams-checker
+  labels:
+    app.kubernetes.io/name: grpc-streams-checker
+    # match your Prometheus's serviceMonitorSelector, e.g.:
+    # release: kube-prometheus-stack
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grpc-streams-checker
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics
+---
+# The alert rules from alerts/grpc-streams-checker.rules.yml, wrapped as a CRD.
+# Paste the `groups:` block from that file under spec: to keep a single source of truth.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: grpc-streams-checker
+  labels:
+    app.kubernetes.io/name: grpc-streams-checker
+    # match your Prometheus's ruleSelector, e.g.:
+    # release: kube-prometheus-stack
+spec:
+  groups: [] # <- paste groups from ../../alerts/grpc-streams-checker.rules.yml

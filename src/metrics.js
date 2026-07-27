@@ -15,7 +15,7 @@ client.collectDefaultMetrics({ register });
 const up = new client.Gauge({
   name: 'grpc_stream_up',
   help: '1 if the last check passed (frames arrived and validation passed), else 0.',
-  labelNames: ['stream', 'addr', 'dc'],
+  labelNames: ['stream', 'method', 'addr', 'dc'],
   registers: [register],
 });
 
@@ -23,7 +23,7 @@ const up = new client.Gauge({
 const checkTotal = new client.Counter({
   name: 'grpc_stream_check_total',
   help: 'Total stream checks, by result (ok|timeout|insufficient_frames|validation_failed|error).',
-  labelNames: ['stream', 'addr', 'dc', 'result'],
+  labelNames: ['stream', 'method', 'addr', 'dc', 'result'],
   registers: [register],
 });
 
@@ -31,7 +31,7 @@ const checkTotal = new client.Counter({
 const errorTotal = new client.Counter({
   name: 'grpc_stream_error_total',
   help: 'Stream check errors by gRPC status code.',
-  labelNames: ['stream', 'addr', 'dc', 'code'],
+  labelNames: ['stream', 'method', 'addr', 'dc', 'code'],
   registers: [register],
 });
 
@@ -41,7 +41,7 @@ const errorTotal = new client.Counter({
 const firstFrameMs = new client.Gauge({
   name: 'grpc_stream_first_frame_ms',
   help: 'Milliseconds until the first frame arrived (last check).',
-  labelNames: ['stream', 'addr', 'dc'],
+  labelNames: ['stream', 'method', 'addr', 'dc'],
   registers: [register],
 });
 
@@ -49,7 +49,7 @@ const firstFrameMs = new client.Gauge({
 const firstFrameSeconds = new client.Histogram({
   name: 'grpc_stream_first_frame_duration_seconds',
   help: 'Time to first frame, as a histogram.',
-  labelNames: ['stream', 'addr', 'dc'],
+  labelNames: ['stream', 'method', 'addr', 'dc'],
   buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
   registers: [register],
 });
@@ -58,7 +58,7 @@ const firstFrameSeconds = new client.Histogram({
 const maxInterFrameMs = new client.Gauge({
   name: 'grpc_stream_max_inter_frame_ms',
   help: 'Largest gap between consecutive frames within the last check.',
-  labelNames: ['stream', 'addr', 'dc'],
+  labelNames: ['stream', 'method', 'addr', 'dc'],
   registers: [register],
 });
 
@@ -68,7 +68,7 @@ const maxInterFrameMs = new client.Gauge({
 const framesLastCheck = new client.Gauge({
   name: 'grpc_stream_frames_last_check',
   help: 'Frames received during the last check.',
-  labelNames: ['stream', 'addr', 'dc'],
+  labelNames: ['stream', 'method', 'addr', 'dc'],
   registers: [register],
 });
 
@@ -76,7 +76,7 @@ const framesLastCheck = new client.Gauge({
 const framesTotal = new client.Counter({
   name: 'grpc_stream_frames_total',
   help: 'Total frames received across all checks.',
-  labelNames: ['stream', 'addr', 'dc'],
+  labelNames: ['stream', 'method', 'addr', 'dc'],
   registers: [register],
 });
 
@@ -84,7 +84,7 @@ const framesTotal = new client.Counter({
 const validationFailTotal = new client.Counter({
   name: 'grpc_stream_validation_fail_total',
   help: 'Frames that failed payload validation, by rule.',
-  labelNames: ['stream', 'addr', 'dc', 'rule'],
+  labelNames: ['stream', 'method', 'addr', 'dc', 'rule'],
   registers: [register],
 });
 
@@ -94,7 +94,7 @@ const validationFailTotal = new client.Counter({
 const lastSuccess = new client.Gauge({
   name: 'grpc_stream_last_success_timestamp_seconds',
   help: 'Unix timestamp of the last successful check for this stream.',
-  labelNames: ['stream', 'addr', 'dc'],
+  labelNames: ['stream', 'method', 'addr', 'dc'],
   registers: [register],
 });
 

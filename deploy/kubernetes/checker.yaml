@@ -1,0 +1,148 @@
+# Copyright 2026 Daniil Romashov
+# SPDX-License-Identifier: Apache-2.0
+#
+# Kubernetes deployment for grpc-streams-checker: ConfigMap (streams.json + protos),
+# Deployment with probes/resources/hardened securityContext, and a Service for scraping.
+# If you run prometheus-operator, also apply servicemonitor.yaml next to this file.
+#
+#   kubectl apply -f checker.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grpc-streams-checker-config
+  labels:
+    app.kubernetes.io/name: grpc-streams-checker
+data:
+  streams.json: |
+    {
+      "addr": "your-backend.your-namespace.svc.cluster.local:443",
+      "dc": "prod",
+      "tls": true,
+      "intervalSeconds": 30,
+      "firstFrameTimeoutMs": 5000,
+      "minFrames": 3,
+      "protoIncludeDirs": ["protos"],
+      "streams": [
+        {
+          "name": "price_stream",
+          "proto": "protos/price.proto",
+          "package": "example.v1",
+          "service": "PriceService",
+          "method": "PriceStream",
+          "request": { "symbol": "BTCUSD" },
+          "expect": { "fields": ["symbol", "price", "ts"] }
+        }
+      ]
+    }
+---
+# Ship your .proto files alongside the config. For a proto monorepo, prefer an
+# initContainer that clones a pinned ref, or bake protos into your own image layer.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grpc-streams-checker-protos
+  labels:
+    app.kubernetes.io/name: grpc-streams-checker
+data:
+  price.proto: |
+    syntax = "proto3";
+    package example.v1;
+    service PriceService {
+      rpc PriceStream(PriceRequest) returns (stream PriceTick);
+    }
+    message PriceRequest { string symbol = 1; }
+    message PriceTick { string symbol = 1; double price = 2; int64 ts = 3; }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grpc-streams-checker
+  labels:
+    app.kubernetes.io/name: grpc-streams-checker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grpc-streams-checker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grpc-streams-checker
+      annotations:
+        # for annotation-based scrape setups; delete if you use ServiceMonitor
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "4777"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: checker
+          image: ghcr.io/youngpabl0/grpc-streams-checker:latest # or your registry
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CONFIG
+              value: /config/streams.json
+            - name: PORT
+              value: "4777"
+            # auth secrets stay in a Secret, expanded by the checker via ${GRPC_TOKEN}
+            # - name: GRPC_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: grpc-streams-checker-auth
+            #       key: token
+          ports:
+            - name: metrics
+              containerPort: 4777
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: protos
+              mountPath: /app/protos
+              readOnly: true
+          livenessProbe:
+            httpGet: { path: /healthz, port: metrics }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /metrics, port: metrics }
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 25m        # the checker is idle between runs
+              memory: 96Mi
+            limits:
+              cpu: 200m       # headroom for many concurrent streams in one run
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: grpc-streams-checker-config
+        - name: protos
+          configMap:
+            name: grpc-streams-checker-protos
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grpc-streams-checker
+  labels:
+    app.kubernetes.io/name: grpc-streams-checker
+spec:
+  selector:
+    app.kubernetes.io/name: grpc-streams-checker
+  ports:
+    - name: metrics
+      port: 4777
+      targetPort: metrics

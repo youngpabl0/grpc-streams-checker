@@ -142,7 +142,16 @@ automatically; you only need `protoIncludeDirs` for *your* shared imports.
 
 ## Metrics
 
-Served at `:4777/metrics` (`/healthz` for liveness). Labels everywhere: `stream`, `addr`, `dc`.
+Served at `:4777/metrics` (`/healthz` for liveness). Labels on every per-stream metric:
+`stream`, `method` (the RPC method — powers per-method dashboards), `addr`, `dc`.
+
+Success rate by method — the query behind the dashboard panels above:
+
+```promql
+sum by (method) (rate(grpc_stream_check_total{result="ok"}[5m]))
+/
+sum by (method) (rate(grpc_stream_check_total[5m]))
+```
 
 | Metric | Type | Meaning |
 |---|---|---|
@@ -185,6 +194,27 @@ docker run -p 4777:4777 \
   -e GRPC_TOKEN \
   grpc-streams-checker
 ```
+
+## Kubernetes
+
+Ready-made manifests in [`deploy/kubernetes/`](deploy/kubernetes/):
+
+- [`checker.yaml`](deploy/kubernetes/checker.yaml) — ConfigMaps (streams.json + protos), Deployment
+  with liveness/readiness probes, conservative resources (`25m/96Mi` requests, `200m/256Mi` limits —
+  the checker idles between runs), hardened securityContext (non-root, read-only rootfs, no caps),
+  and a Service exposing `/metrics`.
+- [`servicemonitor.yaml`](deploy/kubernetes/servicemonitor.yaml) — ServiceMonitor + PrometheusRule
+  wrapper for prometheus-operator; the rule groups come from
+  [`alerts/grpc-streams-checker.rules.yml`](alerts/grpc-streams-checker.rules.yml).
+
+```bash
+kubectl apply -f deploy/kubernetes/checker.yaml
+# prometheus-operator users:
+kubectl apply -f deploy/kubernetes/servicemonitor.yaml
+```
+
+Auth tokens belong in a `Secret` exposed as an env var (`GRPC_TOKEN`) — the config file references
+it as `${GRPC_TOKEN}`, so no credentials ever live in the ConfigMap.
 
 ## The pattern generalizes
 
