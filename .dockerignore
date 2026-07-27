@@ -1,0 +1,15 @@
+node_modules
+.git
+.github
+*.log
+.env
+.env.*
+streams.json
+test
+examples/grpc-streams-checker.jpg
+deploy
+alerts
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
+CODE_OF_CONDUCT.md
