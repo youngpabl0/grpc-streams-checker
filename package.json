@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node src/index.js",
     "once": "node src/index.js --once",
-    "lint": "eslint src"
+    "test": "node --test",
+    "lint": "eslint src examples test"
   },
   "keywords": [
     "grpc",
