@@ -1,0 +1,130 @@
+# Copyright 2026 Daniil Romashov
+# SPDX-License-Identifier: Apache-2.0
+#
+# Ready-made Prometheus alerting rules for grpc-streams-checker.
+#
+# Drop this file into your Prometheus `rule_files:` (or a PrometheusRule CRD if you
+# run prometheus-operator — the `groups:` block below is copy-paste compatible).
+# Tune the thresholds and `for:` durations to your latency/interval budgets:
+# defaults assume intervalSeconds=30 and paging only after ~2-3 failed checks.
+
+groups:
+  - name: grpc-streams-checker
+    rules:
+      # ------------------------------------------------------------------
+      # The failure every other probe misses: the stream is not serving
+      # valid data (no frames, too few frames, or payloads failed validation).
+      # ------------------------------------------------------------------
+      - alert: GrpcStreamDown
+        expr: grpc_stream_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'gRPC stream {{ $labels.stream }} is not serving valid data'
+          description: >-
+            Stream {{ $labels.stream }} on {{ $labels.addr }} ({{ $labels.dc }})
+            failed its last checks for 2 minutes: no frames, fewer frames than
+            required, or payload validation failures. Check
+            grpc_stream_check_total{stream="{{ $labels.stream }}"} by result
+            for the exact failure mode.
+
+      # ------------------------------------------------------------------
+      # Early warning: the first frame is getting slow before going dark.
+      # ------------------------------------------------------------------
+      - alert: GrpcStreamFirstFrameSlow
+        expr: grpc_stream_first_frame_ms > 2000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'gRPC stream {{ $labels.stream }} first frame is slow ({{ $value | humanize }}ms)'
+          description: >-
+            Time-to-first-frame on {{ $labels.stream }} ({{ $labels.dc }}) has been
+            above 2s for 5 minutes — a degrading backend or upstream feed usually
+            shows up here before the stream stops entirely.
+
+      # ------------------------------------------------------------------
+      # Sustained-flow health: frames arrive, but with growing gaps.
+      # ------------------------------------------------------------------
+      - alert: GrpcStreamStuttering
+        expr: grpc_stream_max_inter_frame_ms > 5000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'gRPC stream {{ $labels.stream }} is stuttering (max gap {{ $value | humanize }}ms)'
+          description: >-
+            The largest gap between consecutive frames within a check on
+            {{ $labels.stream }} ({{ $labels.dc }}) exceeds 5s. The producer is
+            alive but not keeping up.
+
+      # ------------------------------------------------------------------
+      # Payloads went bad — usually right after a deploy.
+      # ------------------------------------------------------------------
+      - alert: GrpcStreamPayloadInvalid
+        expr: increase(grpc_stream_validation_fail_total[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: 'gRPC stream {{ $labels.stream }} is emitting invalid payloads ({{ $labels.rule }})'
+          description: >-
+            Frames on {{ $labels.stream }} ({{ $labels.dc }}) failed payload
+            validation ({{ $labels.rule }}) in the last 10 minutes. The stream is
+            up but the data is wrong — correlate with recent deploys.
+
+      # ------------------------------------------------------------------
+      # Transport-level errors by gRPC status code.
+      # ------------------------------------------------------------------
+      - alert: GrpcStreamErrors
+        expr: increase(grpc_stream_error_total[10m]) > 2
+        labels:
+          severity: warning
+        annotations:
+          summary: 'gRPC stream {{ $labels.stream }} errors: {{ $labels.code }}'
+          description: >-
+            Repeated {{ $labels.code }} errors on {{ $labels.stream }}
+            ({{ $labels.dc }}) over the last 10 minutes. UNAVAILABLE usually means
+            LB/proxy/backend restarts; UNAUTHENTICATED means the checker's
+            credentials expired; DEADLINE_EXCEEDED means the call never completed.
+
+      # ------------------------------------------------------------------
+      # Nothing green for too long — even if individual checks flap.
+      # ------------------------------------------------------------------
+      - alert: GrpcStreamNoRecentSuccess
+        expr: time() - grpc_stream_last_success_timestamp_seconds > 300
+        labels:
+          severity: critical
+        annotations:
+          summary: 'gRPC stream {{ $labels.stream }} has not passed a check in 5m'
+          description: >-
+            No fully successful check (frames + validation) for
+            {{ $labels.stream }} ({{ $labels.dc }}) in over 5 minutes.
+
+      # ------------------------------------------------------------------
+      # The checker itself died — silence must never look like health.
+      # ------------------------------------------------------------------
+      - alert: GrpcStreamsCheckerDead
+        expr: time() - max by (dc) (grpc_stream_last_run_timestamp_seconds) > 120
+        labels:
+          severity: critical
+        annotations:
+          summary: 'grpc-streams-checker in {{ $labels.dc }} stopped running'
+          description: >-
+            The checker in {{ $labels.dc }} has not completed a run in 2 minutes.
+            Dead monitoring masquerades as healthy streams — treat as critical.
+
+      # ------------------------------------------------------------------
+      # A configured stream disappeared from metrics entirely
+      # (renamed, dropped from config, or scrape broken).
+      # ------------------------------------------------------------------
+      - alert: GrpcStreamSeriesAbsent
+        expr: grpc_stream_up unless (grpc_stream_up offset 10m)
+        labels:
+          severity: info
+        annotations:
+          summary: 'New/changed gRPC stream series: {{ $labels.stream }}'
+          description: >-
+            Stream series changed in the last 10m ({{ $labels.stream }},
+            {{ $labels.dc }}) — verify config renames did not silently drop an
+            old stream from monitoring.

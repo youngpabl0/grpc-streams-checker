@@ -46,6 +46,13 @@ For every stream in your config, on every run, the checker:
 One bad stream never fails the run; every failure mode gets its own result label:
 `ok` · `timeout` · `insufficient_frames` · `validation_failed` · `error` (with the gRPC status code).
 
+## What it looks like in production
+
+A Grafana dashboard built on the checker's metrics, watching six production streaming methods across
+a week — per-method success rate, request counts, and top-10 stream duration:
+
+![Grafana dashboard driven by grpc-streams-checker metrics](examples/grpc-streams-checker.jpg)
+
 ## Quick start (60 seconds, no infrastructure)
 
 ```bash
@@ -151,27 +158,22 @@ Served at `:4777/metrics` (`/healthz` for liveness). Labels everywhere: `stream`
 | `grpc_stream_last_success_timestamp_seconds` | gauge | when this stream last fully passed |
 | `grpc_stream_last_run_timestamp_seconds` | gauge | when the checker last completed a run |
 
-## Alerting (PromQL)
+## Alerting
 
-```promql
-# a stream is not serving valid data — the failure every other probe misses
-grpc_stream_up == 0
+Ready-made Prometheus rules ship in
+[`alerts/grpc-streams-checker.rules.yml`](alerts/grpc-streams-checker.rules.yml) — eight alerts with
+severities, `for:` windows, and runbook-style descriptions, copy-paste compatible with plain
+Prometheus `rule_files:` and with a prometheus-operator `PrometheusRule`. Highlights:
 
-# early warning: first frame degrading before it goes dark
-grpc_stream_first_frame_ms > 2000
-
-# producer is stuttering: frames arrive, but with growing gaps
-grpc_stream_max_inter_frame_ms > 5000
-
-# payloads went bad after a deploy
-increase(grpc_stream_validation_fail_total[10m]) > 0
-
-# a stream hasn't fully passed in 5 minutes
-time() - grpc_stream_last_success_timestamp_seconds > 300
-
-# the checker itself is dead (don't confuse it with healthy streams)
-time() - max by (dc) (grpc_stream_last_run_timestamp_seconds) > 120
-```
+| Alert | Condition | Severity |
+|---|---|---|
+| `GrpcStreamDown` | `grpc_stream_up == 0` for 2m — no valid data | critical |
+| `GrpcStreamFirstFrameSlow` | first frame > 2s for 5m — degrading before dark | warning |
+| `GrpcStreamStuttering` | inter-frame gap > 5s — producer not keeping up | warning |
+| `GrpcStreamPayloadInvalid` | validation failures — data went bad after a deploy | critical |
+| `GrpcStreamErrors` | repeated gRPC errors by status code | warning |
+| `GrpcStreamNoRecentSuccess` | nothing fully green in 5m | critical |
+| `GrpcStreamsCheckerDead` | the checker itself stopped — silence ≠ health | critical |
 
 ## Docker
 
