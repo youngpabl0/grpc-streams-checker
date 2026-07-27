@@ -4,8 +4,10 @@
   "tls": false,
   "intervalSeconds": 30,
   "firstFrameTimeoutMs": 5000,
+  "minFrames": 3,
+  "protoIncludeDirs": ["protos"],
 
-  "_auth_note": "Optional. Uncomment to send auth. ${VARS} expand from the environment.",
+  "_auth_note": "Optional. ${VARS} expand from the environment at call time.",
   "_auth_example": {
     "token": "${GRPC_TOKEN}",
     "metadata": { "x-tenant": "${TENANT_ID}" }
@@ -18,7 +20,24 @@
       "package": "example.v1",
       "service": "PriceService",
       "method": "PriceStream",
-      "request": { "symbol": "BTCUSD" }
+      "request": { "symbol": "BTCUSD" },
+      "minFrames": 3,
+      "expect": {
+        "fields": ["symbol", "price", "ts"],
+        "match": { "symbol": "BTCUSD" }
+      }
+    },
+    {
+      "name": "price_stream_other_dc",
+      "proto": "examples/price.proto",
+      "package": "example.v1",
+      "service": "PriceService",
+      "method": "PriceStream",
+      "request": { "symbol": "ETHUSD" },
+      "addr": "other-host:443",
+      "tls": true,
+      "timeoutMs": 10000,
+      "expect": { "fields": ["price"], "match": { "symbol": "/^ETH/" } }
     }
   ]
 }

@@ -1,115 +1,175 @@
 # grpc-streams-checker
 
-Synthetic monitoring for gRPC **server-side streams** — because a healthy connection, a
-successful handshake, and a green health check do **not** mean data is actually flowing.
+Synthetic monitoring for gRPC **server-side streams** — opens every stream like a real client,
+demands real frames with valid payloads, and exports rich Prometheus metrics you can page on.
 
 [![CI](https://github.com/youngpabl0/grpc-streams-checker/actions/workflows/ci.yml/badge.svg)](https://github.com/youngpabl0/grpc-streams-checker/actions)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Node >= 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](package.json)
 
-## Why
+## The problem
 
-Uptime checks are a solved problem for request/response APIs: hit the endpoint, get a status code,
-done. Server-side streaming RPCs break that model. A gRPC stream is a channel the server holds open
-and pushes messages into over time — so the socket can be up, the handshake can succeed, the health
-endpoint can be green, and yet **no frames are arriving**. Standard probes report "healthy" while
-consumers get nothing.
+Uptime checks are solved for request/response APIs: hit the endpoint, read the status code, done.
+Server-side streaming RPCs break that model. A stream is a channel the server holds open and pushes
+messages into over time — so **the socket can be up, the handshake can succeed, the health endpoint
+can be green, and yet no data is flowing.**
 
-`grpc-streams-checker` answers the only question that matters for a stream: **is it producing?** It
-opens each configured stream as a real client, waits for the first frame within a time budget, and
-exports the result as Prometheus metrics you can alert on.
+It gets worse in real production topologies, where a stream crosses several hops before a browser or
+service consumes it:
 
-## How it works
+```
+client ──▶ LB ──▶ Envoy (grpc-web / HTTP/2) ──▶ backend service ──▶ upstream feed
+```
 
-On each run, for every stream in your config, the checker:
+Every hop is a place where the stream can silently die while everything still looks healthy:
 
-1. loads the `.proto` at runtime (via `@grpc/proto-loader` — no codegen step);
-2. opens the server-side streaming RPC as a client;
-3. waits for the **first frame** within `firstFrameTimeoutMs`;
-4. records: time-to-first-frame, an `up` gauge, and a per-result counter — labelled by stream / addr / dc.
+- an **idle-timeout on the LB or proxy** quietly kills long-lived connections;
+- **Envoy / grpc-web translation** can buffer or drop frames while the TCP session stays up;
+- the backend keeps the stream open but its **upstream feed went quiet** — it has nothing to push;
+- the stream produces frames, but they're **garbage** (empty payloads, missing fields) after a bad deploy.
 
-It never lets one bad stream fail the run, and it cancels each stream as soon as the first frame lands.
+None of these are visible to an HTTP 200 probe or a gRPC health check. The only probe that answers
+"is this stream actually serving valid data?" is a client that **opens the stream, reads several
+frames, and checks what's inside them.** That's exactly what this checker is.
 
-## Install
+## What a check does
+
+For every stream in your config, on every run, the checker:
+
+1. **loads the `.proto` at runtime** (no codegen, no stale stubs — add a stream by pointing at a file);
+2. **opens the server-side streaming RPC** as a real client (TLS or plaintext, optional auth metadata);
+3. **collects `minFrames` frames** (default 1; set 3–5 to verify *sustained* flow, not just a first burp)
+   within the time budget, measuring time-to-first-frame and the largest inter-frame gap;
+4. **validates every frame's payload** against your rules — required fields, exact matches, regexes;
+5. **cancels the stream** and writes the outcome to Prometheus metrics.
+
+One bad stream never fails the run; every failure mode gets its own result label:
+`ok` · `timeout` · `insufficient_frames` · `validation_failed` · `error` (with the gRPC status code).
+
+## Quick start (60 seconds, no infrastructure)
 
 ```bash
 git clone https://github.com/youngpabl0/grpc-streams-checker.git
-cd grpc-streams-checker
-npm ci
+cd grpc-streams-checker && npm ci
+
+# terminal 1 — demo gRPC server with a PriceStream
+node examples/demo-server.js
+
+# terminal 2 — run the checker against it
+cp streams.example.json streams.json
+node src/index.js --once
+#  → {"stream":"price_stream","result":"ok","frames":3,"firstFrameMs":223,...}
 ```
 
-## Configure
+Now break it and watch the checker notice:
 
 ```bash
-cp streams.example.json streams.json
+node examples/demo-server.js --silent    # stream opens, no frames  → result: timeout
+node examples/demo-server.js --broken    # frames with empty fields → result: validation_failed
+node examples/demo-server.js --slow=2000 # sluggish producer        → max_inter_frame_ms grows
 ```
+
+`--once` exits non-zero if any stream failed — usable directly as a CI gate or cron probe.
+
+## Configuration
 
 ```jsonc
 {
-  "addr": "localhost:50051",      // default target host:port for all streams
-  "dc": "dev",                    // datacenter/label
-  "tls": false,                   // TLS on by default; set false for plaintext
-  "intervalSeconds": 30,          // how often to run the checks
-  "firstFrameTimeoutMs": 5000,    // a stream must produce a frame within this budget
+  "addr": "localhost:50051",        // default target for all streams
+  "dc": "dev",                      // datacenter label on every metric
+  "tls": false,                     // TLS on by default; false = plaintext
+  "intervalSeconds": 30,            // how often to re-check (daemon mode)
+  "firstFrameTimeoutMs": 5000,      // budget for collecting minFrames
+  "minFrames": 3,                   // frames to demand per check (sustained flow)
+  "protoIncludeDirs": ["protos"],   // resolve `import` statements inside protos
+
+  "auth": {                         // optional; ${VARS} expand from the environment
+    "token": "${GRPC_TOKEN}",       // → authorization: Bearer <token>
+    "metadata": { "x-tenant": "${TENANT_ID}" }
+  },
+
   "streams": [
     {
-      "name": "price_stream",     // metric label; also the --only key
-      "proto": "examples/price.proto",
+      "name": "price_stream",              // metric label + --only key
+      "proto": "protos/price.proto",       // path to the .proto file
       "package": "example.v1",
       "service": "PriceService",
-      "method": "PriceStream",     // a server-side streaming RPC
-      "request": { "symbol": "BTCUSD" },
-      "addr": "other-host:443",    // optional per-stream override
-      "tls": true                  // optional per-stream override
+      "method": "PriceStream",             // a server-side streaming RPC
+      "request": { "symbol": "BTCUSD" },   // request message for the call
+      "minFrames": 3,                      // per-stream override
+      "timeoutMs": 10000,                  // per-stream override
+      "addr": "other-host:443",            // per-stream override
+      "tls": true,                         // per-stream override
+      "expect": {                          // payload validation, per frame
+        "fields": ["symbol", "price", "ts"],      // must exist & be non-empty
+        "match": { "symbol": "BTCUSD" }           // exact match…
+        // "match": { "symbol": "/^BTC/" }        // …or /regex/
+      }
     }
   ]
 }
 ```
 
-**Auth (optional).** Add an `auth` block; `${ENV}` placeholders expand at runtime so secrets stay out
-of the file:
+Environment overrides: `CONFIG`, `ADDR`, `DC`, `PORT` (default 4777), `TIMEOUT_MS`,
+`INTERVAL_SECONDS`, `MIN_FRAMES`, `LOG_LEVEL`, `LOG_PRETTY=true`.
 
-```jsonc
-"auth": { "token": "${GRPC_TOKEN}", "metadata": { "x-tenant": "${TENANT_ID}" } }
-```
-
-For anything more involved (minting a JWT, AWS SigV4, mTLS) extend the single seam in
+For auth beyond a bearer token (minted JWTs, AWS SigV4, mTLS) extend the single seam in
 [`src/auth.js`](src/auth.js).
 
-## Run
+## Supplying your `.proto` files
 
-```bash
-npm start                       # loop forever on intervalSeconds
-node src/index.js --once        # run one pass and exit (great for CI / cron)
-node src/index.js --only=price_stream   # check only named streams (debugging)
-```
+The checker consumes plain `.proto` **source files at runtime** — you never compile stubs. Three
+common ways to get them next to the checker:
 
-Environment overrides: `CONFIG`, `ADDR`, `DC`, `PORT` (default 4777), `TIMEOUT_MS`,
-`INTERVAL_SECONDS`, `LOG_LEVEL`, `LOG_PRETTY=true`.
+1. **Copy them in** — drop the files into `protos/` in your deployment and reference
+   `"proto": "protos/your_service.proto"`. If your protos `import` shared definitions, list the
+   roots in `"protoIncludeDirs"` so imports resolve.
+2. **Git submodule / subtree** — if your org keeps a proto monorepo (the usual case), pin it:
+   `git submodule add <proto-repo-url> protos`. The checker then always tests against the exact
+   contract version you pinned — bump the submodule to test a new contract.
+3. **Bake into the image** — in your own Dockerfile layer, `COPY protos/ /app/protos/`, or at
+   runtime mount them: `-v $PWD/protos:/app/protos:ro`.
+
+Google well-known types (`google/protobuf/*.proto`) ship with `protobufjs` and resolve
+automatically; you only need `protoIncludeDirs` for *your* shared imports.
 
 ## Metrics
 
-Served at `http://localhost:4777/metrics` (`/healthz` for liveness):
+Served at `:4777/metrics` (`/healthz` for liveness). Labels everywhere: `stream`, `addr`, `dc`.
 
-| Metric | Type | Labels | Meaning |
-|---|---|---|---|
-| `grpc_stream_first_frame_ms` | gauge | stream, addr, dc | ms to first frame on the last check |
-| `grpc_stream_up` | gauge | stream, addr, dc | 1 if a frame arrived within the timeout, else 0 |
-| `grpc_stream_check_total` | counter | stream, addr, dc, result | checks by result (`ok`/`timeout`/`error`) |
-| `grpc_stream_last_run_timestamp_seconds` | gauge | addr, dc | unix time of the last completed run |
+| Metric | Type | Meaning |
+|---|---|---|
+| `grpc_stream_up` | gauge | 1 = last check passed (frames arrived **and** payloads valid) |
+| `grpc_stream_check_total{result}` | counter | checks by outcome: `ok`/`timeout`/`insufficient_frames`/`validation_failed`/`error` |
+| `grpc_stream_error_total{code}` | counter | failures by gRPC status code (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, …) |
+| `grpc_stream_first_frame_ms` | gauge | time to first frame, last check |
+| `grpc_stream_first_frame_duration_seconds` | histogram | same, for percentiles over time |
+| `grpc_stream_max_inter_frame_ms` | gauge | worst gap between frames within a check — sustained-flow health |
+| `grpc_stream_frames_last_check` | gauge | frames received in the last check |
+| `grpc_stream_frames_total` | counter | frames received, ever |
+| `grpc_stream_validation_fail_total{rule}` | counter | payload failures: `missing_field`/`mismatch`/`empty_frame` |
+| `grpc_stream_last_success_timestamp_seconds` | gauge | when this stream last fully passed |
+| `grpc_stream_last_run_timestamp_seconds` | gauge | when the checker last completed a run |
 
 ## Alerting (PromQL)
 
 ```promql
-# a stream opened but produced no frame — the failure uptime checks miss
+# a stream is not serving valid data — the failure every other probe misses
 grpc_stream_up == 0
 
-# early warning: first frame getting slow before it goes dark
+# early warning: first frame degrading before it goes dark
 grpc_stream_first_frame_ms > 2000
 
-# error rate per stream
-rate(grpc_stream_check_total{result="error"}[5m]) > 0
+# producer is stuttering: frames arrive, but with growing gaps
+grpc_stream_max_inter_frame_ms > 5000
 
-# the checker itself died (no run recently)
+# payloads went bad after a deploy
+increase(grpc_stream_validation_fail_total[10m]) > 0
+
+# a stream hasn't fully passed in 5 minutes
+time() - grpc_stream_last_success_timestamp_seconds > 300
+
+# the checker itself is dead (don't confuse it with healthy streams)
 time() - max by (dc) (grpc_stream_last_run_timestamp_seconds) > 120
 ```
 
@@ -117,16 +177,32 @@ time() - max by (dc) (grpc_stream_last_run_timestamp_seconds) > 120
 
 ```bash
 docker build -t grpc-streams-checker .
-docker run -p 4777:4777 -v "$PWD/streams.json:/app/streams.json:ro" grpc-streams-checker
+docker run -p 4777:4777 \
+  -v "$PWD/streams.json:/app/streams.json:ro" \
+  -v "$PWD/protos:/app/protos:ro" \
+  -e GRPC_TOKEN \
+  grpc-streams-checker
 ```
 
 ## The pattern generalizes
 
-The same "open it and watch for a frame" approach works for any long-lived push transport —
-WebSocket, SSE, message-queue consumers. The value is turning "is data flowing?" into a labelled
-metric you page yourself about, instead of something a customer reports.
+The same "open it, demand frames, validate payloads" approach works for any long-lived push
+transport — WebSocket, SSE, message-queue consumers. The value is turning *"is data actually
+flowing, and is it valid?"* into labelled metrics you page yourself about, instead of something a
+customer reports.
+
+## Built on
+
+This tool is a thin, opinionated layer over excellent open-source work:
+
+- [`@grpc/grpc-js`](https://github.com/grpc/grpc-node) — the pure-JS gRPC client that carries every check.
+- [`@grpc/proto-loader`](https://github.com/grpc/grpc-node/tree/master/packages/proto-loader) — runtime
+  `.proto` loading (via [`protobufjs`](https://github.com/protobufjs/protobuf.js)); the reason there is no codegen step.
+- [`prom-client`](https://github.com/siimon/prom-client) — Prometheus metrics for Node.
+- [`pino`](https://github.com/pinojs/pino) — fast structured JSON logging.
+- [`express`](https://github.com/expressjs/express) — serves `/metrics` and `/healthz`.
 
 ## License
 
-[Apache License 2.0](LICENSE) — free to use, modify, and distribute; keep the copyright/`NOTICE`.
-Copyright 2026 Daniil Romashov.
+[Apache License 2.0](LICENSE) — free to use, modify, and distribute; keep the copyright and
+`NOTICE`. Copyright 2026 Daniil Romashov.

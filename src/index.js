@@ -22,6 +22,8 @@ function loadConfig() {
   cfg.tls = cfg.tls !== false; // TLS on unless explicitly disabled
   cfg.firstFrameTimeoutMs = Number(process.env.TIMEOUT_MS || cfg.firstFrameTimeoutMs || 5000);
   cfg.intervalSeconds = Number(process.env.INTERVAL_SECONDS || cfg.intervalSeconds || 30);
+  cfg.minFrames = Number(process.env.MIN_FRAMES || cfg.minFrames || 1);
+  cfg.protoIncludeDirs = cfg.protoIncludeDirs || [];
   cfg.streams = cfg.streams || [];
   return cfg;
 }
@@ -30,46 +32,74 @@ function loadConfig() {
 function onlyFilter() {
   const arg = process.argv.find((a) => a.startsWith('--only='));
   if (!arg) return null;
-  return new Set(
-    arg.slice('--only='.length).split(',').map((s) => s.trim()).filter(Boolean),
-  );
+  return new Set(arg.slice('--only='.length).split(',').map((s) => s.trim()).filter(Boolean));
 }
 
 async function runOnce(cfg) {
   const only = onlyFilter();
   const streams = cfg.streams.filter((s) => !only || only.has(s.name));
 
-  await Promise.all(streams.map(async (s) => {
+  const results = await Promise.all(streams.map(async (s) => {
     const labels = { stream: s.name, addr: s.addr || cfg.addr, dc: cfg.dc };
     const out = await checkStream(s, {
       addr: cfg.addr,
       tls: cfg.tls,
-      timeoutMs: cfg.firstFrameTimeoutMs,
+      timeoutMs: s.timeoutMs || cfg.firstFrameTimeoutMs,
+      minFrames: cfg.minFrames,
       auth: cfg.auth,
+      includeDirs: cfg.protoIncludeDirs,
     });
 
+    // outcome
     metrics.checkTotal.inc({ ...labels, result: out.result });
     metrics.up.set(labels, out.result === 'ok' ? 1 : 0);
-    if (out.result === 'ok') metrics.firstFrameMs.set(labels, out.ms);
+    if (out.code) metrics.errorTotal.inc({ ...labels, code: out.code });
+    if (out.failedRule) metrics.validationFailTotal.inc({ ...labels, rule: out.failedRule });
 
-    const line = { stream: s.name, result: out.result, ms: Math.round(out.ms), error: out.error };
+    // latency & volume
+    if (out.frames > 0) {
+      metrics.firstFrameMs.set(labels, out.firstFrameMs);
+      metrics.firstFrameSeconds.observe(labels, out.firstFrameMs / 1000);
+      metrics.framesTotal.inc(labels, out.frames);
+    }
+    metrics.framesLastCheck.set(labels, out.frames);
+    if (out.frames > 1) metrics.maxInterFrameMs.set(labels, out.maxGapMs);
+    if (out.result === 'ok') metrics.lastSuccess.set(labels, Math.floor(Date.now() / 1000));
+
+    const line = {
+      stream: s.name,
+      result: out.result,
+      frames: out.frames,
+      firstFrameMs: Math.round(out.firstFrameMs),
+      maxGapMs: Math.round(out.maxGapMs),
+      code: out.code,
+      error: out.error,
+    };
     if (out.result === 'ok') logger.info(line, 'stream ok');
     else logger.warn(line, 'stream check failed');
+    return out;
   }));
 
   metrics.lastRun.set({ addr: cfg.addr, dc: cfg.dc }, Math.floor(Date.now() / 1000));
+  return results;
 }
 
 function main() {
   const cfg = loadConfig();
   logger.info(
-    { addr: cfg.addr, dc: cfg.dc, streams: cfg.streams.length, intervalSeconds: cfg.intervalSeconds },
+    {
+      addr: cfg.addr, dc: cfg.dc, streams: cfg.streams.length,
+      minFrames: cfg.minFrames, intervalSeconds: cfg.intervalSeconds,
+    },
     'starting grpc-streams-checker',
   );
 
   if (process.argv.includes('--once')) {
     runOnce(cfg)
-      .then(() => process.exit(0))
+      .then((results) => {
+        const failed = results.filter((r) => r.result !== 'ok').length;
+        process.exit(failed === 0 ? 0 : 1); // non-zero exit → usable as a CI / cron gate
+      })
       .catch((err) => { logger.error({ err: err.message }, 'run failed'); process.exit(1); });
     return;
   }
