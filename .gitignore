@@ -1,0 +1,9 @@
+node_modules/
+npm-debug.log*
+.env
+.env.*
+# local, environment-specific config (ship streams.example.json instead)
+streams.json
+*.log
+coverage/
+.DS_Store

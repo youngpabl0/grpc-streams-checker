@@ -1,0 +1,24 @@
+{
+  "addr": "localhost:50051",
+  "dc": "dev",
+  "tls": false,
+  "intervalSeconds": 30,
+  "firstFrameTimeoutMs": 5000,
+
+  "_auth_note": "Optional. Uncomment to send auth. ${VARS} expand from the environment.",
+  "_auth_example": {
+    "token": "${GRPC_TOKEN}",
+    "metadata": { "x-tenant": "${TENANT_ID}" }
+  },
+
+  "streams": [
+    {
+      "name": "price_stream",
+      "proto": "examples/price.proto",
+      "package": "example.v1",
+      "service": "PriceService",
+      "method": "PriceStream",
+      "request": { "symbol": "BTCUSD" }
+    }
+  ]
+}

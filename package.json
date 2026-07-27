@@ -1,0 +1,44 @@
+{
+  "name": "grpc-streams-checker",
+  "version": "1.0.0",
+  "description": "Synthetic monitoring for gRPC server-side streams: open each stream on a schedule, verify that frames actually arrive, and export Prometheus metrics.",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "bin": {
+    "grpc-streams-checker": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "once": "node src/index.js --once",
+    "lint": "eslint src"
+  },
+  "keywords": [
+    "grpc",
+    "streaming",
+    "monitoring",
+    "synthetic-monitoring",
+    "prometheus",
+    "observability",
+    "sre"
+  ],
+  "author": "Daniil Romashov",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/youngpabl0/grpc-streams-checker"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.10.0",
+    "@grpc/proto-loader": "^0.7.10",
+    "express": "^4.19.2",
+    "pino": "^9.0.0",
+    "prom-client": "^15.1.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "pino-pretty": "^11.0.0"
+  }
+}

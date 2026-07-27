@@ -1,0 +1,24 @@
+// Copyright 2026 Daniil Romashov
+// SPDX-License-Identifier: Apache-2.0
+//
+// A minimal example service with a server-side streaming RPC, used by
+// streams.example.json. Replace with your own proto(s) to monitor real streams.
+
+syntax = "proto3";
+
+package example.v1;
+
+service PriceService {
+  // Server-side stream: the server pushes PriceTick messages over time.
+  rpc PriceStream(PriceRequest) returns (stream PriceTick);
+}
+
+message PriceRequest {
+  string symbol = 1;
+}
+
+message PriceTick {
+  string symbol = 1;
+  double price = 2;
+  int64 ts = 3;
+}
