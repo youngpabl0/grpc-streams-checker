@@ -1,0 +1,69 @@
+{
+  "addr": "demo-healthy:50051",
+  "dc": "demo",
+  "tls": false,
+  "intervalSeconds": 10,
+  "firstFrameTimeoutMs": 5000,
+  "minFrames": 3,
+
+  "streams": [
+    {
+      "name": "btc_quotes",
+      "proto": "examples/price.proto",
+      "package": "example.v1",
+      "service": "PriceService",
+      "method": "PriceStream",
+      "request": { "symbol": "BTCUSD" },
+      "expect": { "fields": ["symbol", "price", "ts"], "match": { "symbol": "BTCUSD" } }
+    },
+    {
+      "name": "eth_quotes",
+      "proto": "examples/price.proto",
+      "package": "example.v1",
+      "service": "PriceService",
+      "method": "PriceStream",
+      "request": { "symbol": "ETHUSD" },
+      "expect": { "fields": ["symbol", "price", "ts"], "match": { "symbol": "/^ETH/" } }
+    },
+    {
+      "name": "slow_quotes",
+      "addr": "demo-slow:50051",
+      "proto": "examples/price.proto",
+      "package": "example.v1",
+      "service": "PriceService",
+      "method": "PriceStream",
+      "request": { "symbol": "SOLUSD" },
+      "expect": { "fields": ["symbol", "price", "ts"] }
+    },
+    {
+      "name": "flaky_quotes",
+      "addr": "demo-flaky:50051",
+      "proto": "examples/price.proto",
+      "package": "example.v1",
+      "service": "PriceService",
+      "method": "PriceStream",
+      "request": { "symbol": "XRPUSD" },
+      "expect": { "fields": ["symbol", "price", "ts"] }
+    },
+    {
+      "name": "broken_quotes",
+      "addr": "demo-broken:50051",
+      "proto": "examples/price.proto",
+      "package": "example.v1",
+      "service": "PriceService",
+      "method": "PriceStream",
+      "request": { "symbol": "ADAUSD" },
+      "expect": { "fields": ["symbol", "price", "ts"] }
+    },
+    {
+      "name": "silent_quotes",
+      "addr": "demo-silent:50051",
+      "proto": "examples/price.proto",
+      "package": "example.v1",
+      "service": "PriceService",
+      "method": "PriceStream",
+      "request": { "symbol": "DOTUSD" },
+      "expect": { "fields": ["symbol", "price", "ts"] }
+    }
+  ]
+}

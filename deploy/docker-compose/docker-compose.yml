@@ -1,0 +1,124 @@
+# Copyright 2026 Daniil Romashov
+# SPDX-License-Identifier: Apache-2.0
+#
+# One-command demo stack: demo gRPC servers in several failure modes, the
+# checker, Prometheus with the repository's alert rules, and Grafana with the
+# bundled dashboard already provisioned.
+#
+#   cd deploy/docker-compose
+#   docker compose up --build
+#
+#   Grafana     http://localhost:3000   (anonymous viewer; admin / admin to edit)
+#   Prometheus  http://localhost:9090   (Alerts tab shows the bundled rules)
+#   Checker     http://localhost:4777/metrics
+#
+#   docker compose down -v   # stop and remove everything
+
+name: grpc-streams-checker-demo
+
+# The demo servers run from the same image as the checker (it already carries
+# @grpc/grpc-js); examples/ is mounted read-only.
+x-demo-server: &demo-server
+  build:
+    context: ../..
+  image: grpc-streams-checker:demo
+  volumes:
+    - ../../examples:/app/examples:ro
+  restart: unless-stopped
+  healthcheck:
+    test:
+      - CMD
+      - node
+      - -e
+      - "require('net').connect(50051,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))"
+    interval: 10s
+    timeout: 3s
+    retries: 3
+
+services:
+  # Frames every 200 to 500 ms: always passes (btc_quotes, eth_quotes).
+  demo-healthy:
+    <<: *demo-server
+    command: ["node", "examples/demo-server.js", "--jitter=300"]
+
+  # Frames every 1.0 to 1.9 s: passes, with large inter-frame gaps and the
+  # occasional insufficient_frames when three frames miss the 5 s budget.
+  demo-slow:
+    <<: *demo-server
+    command: ["node", "examples/demo-server.js", "--slow=1000", "--jitter=900"]
+
+  # Rotates normal > slow > broken > silent > error (UNAVAILABLE), 3 minutes
+  # each: failures and recoveries on one stream.
+  demo-flaky:
+    <<: *demo-server
+    command: ["node", "examples/demo-server.js", "--cycle=180", "--jitter=300"]
+
+  # Frames arrive, payloads are empty: validation_failed (missing_field).
+  demo-broken:
+    <<: *demo-server
+    command: ["node", "examples/demo-server.js", "--broken"]
+
+  # Stream opens, no frames ever: timeout.
+  demo-silent:
+    <<: *demo-server
+    command: ["node", "examples/demo-server.js", "--silent"]
+
+  checker:
+    build:
+      context: ../..
+    image: grpc-streams-checker:demo
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: info
+    volumes:
+      - ./streams.demo.json:/app/streams.json:ro
+      - ../../examples:/app/examples:ro
+    ports:
+      - "4777:4777"
+    depends_on:
+      - demo-healthy
+      - demo-slow
+      - demo-flaky
+      - demo-broken
+      - demo-silent
+
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../../alerts:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - checker
+
+  grafana:
+    image: grafana/grafana:12.2.1
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/grpc-streams-checker-dashboard.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/grpc-streams-checker-dashboard.json:/var/lib/grafana/dashboards/grpc-streams-checker-dashboard.json:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  grafana-data:

@@ -1,0 +1,17 @@
+# Copyright 2026 Daniil Romashov
+# SPDX-License-Identifier: Apache-2.0
+#
+# Prometheus config for the demo stack: scrape the checker and load the
+# repository's ready-made alert rules from alerts/.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: grpc-streams-checker
+    static_configs:
+      - targets: ["checker:4777"]

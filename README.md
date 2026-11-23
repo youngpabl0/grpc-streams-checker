@@ -74,9 +74,37 @@ Now break it and watch the checker notice:
 node examples/demo-server.js --silent    # stream opens, no frames  → result: timeout
 node examples/demo-server.js --broken    # frames with empty fields → result: validation_failed
 node examples/demo-server.js --slow=2000 # sluggish producer        → max_inter_frame_ms grows
+node examples/demo-server.js --error=UNAVAILABLE # stream fails with a status → result: error
 ```
 
 `--once` exits non-zero if any stream failed — usable directly as a CI gate or cron probe.
+
+## Demo stack (one command)
+
+The whole picture with Docker only: demo gRPC servers in several states, the checker, Prometheus
+with the bundled alert rules, and Grafana with the bundled dashboard already provisioned.
+
+```bash
+cd deploy/docker-compose
+docker compose up --build
+```
+
+| What | URL |
+|---|---|
+| Grafana dashboard | http://localhost:3000 (opens on the dashboard; anonymous viewer, `admin` / `admin` to edit) |
+| Prometheus, alert rules | http://localhost:9090/alerts |
+| Checker metrics | http://localhost:4777/metrics |
+
+The stack checks six streams: two healthy, one slow (big inter-frame gaps, the occasional
+`insufficient_frames`), one with empty payloads (`validation_failed`), one that opens and never
+sends a frame (`timeout`), and one flaky server that cycles through normal, slow, broken, silent
+and `UNAVAILABLE` every 3 minutes, so failures and recoveries show up on the graphs. Stop it with
+`docker compose down -v`.
+
+The dashboard JSON lives in
+[`deploy/grafana/grpc-streams-checker-dashboard.json`](deploy/grafana/grpc-streams-checker-dashboard.json)
+and imports into any Grafana as is (Dashboards > New > Import; pick your Prometheus data source in
+the variable at the top).
 
 ## Configuration
 
