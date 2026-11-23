@@ -6,7 +6,7 @@ node_modules
 .env.*
 streams.json
 test
-examples/grpc-streams-checker.jpg
+docs
 deploy
 alerts
 CHANGELOG.md

@@ -48,12 +48,15 @@ For every stream in your config, on every run, the checker:
 One bad stream never fails the run; every failure mode gets its own result label:
 `ok` · `timeout` · `insufficient_frames` · `validation_failed` · `stale` · `error` (with the gRPC status code).
 
-## What it looks like in production
+## What it looks like
 
-A Grafana dashboard built on the checker's metrics, watching six production streaming methods across
-a week — per-method success rate, request counts, and top-10 stream duration:
+The bundled Grafana dashboard, captured from the [demo stack](#demo-stack-one-command) after about
+half an hour: two healthy streams, a slow one, one with invalid payloads, one that never sends a
+frame, and a flaky one that fails and recovers in turn. Every panel is built on the checker's own
+metrics; the dashboard ships in
+[`deploy/grafana/`](deploy/grafana/grpc-streams-checker-dashboard.json).
 
-![Grafana dashboard driven by grpc-streams-checker metrics](examples/grpc-streams-checker.jpg)
+![Grafana dashboard of the demo stack, driven by grpc-streams-checker metrics](docs/dashboard.png)
 
 ## Quick start (60 seconds, no infrastructure)
 
@@ -94,9 +97,9 @@ docker compose up --build
 
 | What | URL |
 |---|---|
-| Grafana dashboard | http://localhost:3000 (opens on the dashboard; anonymous viewer, `admin` / `admin` to edit) |
-| Prometheus, alert rules | http://localhost:9090/alerts |
-| Checker metrics | http://localhost:4777/metrics |
+| Grafana dashboard | <http://localhost:3000> (opens on the dashboard; anonymous viewer, `admin` / `admin` to edit) |
+| Prometheus, alert rules | <http://localhost:9090/alerts> |
+| Checker metrics | <http://localhost:4777/metrics> |
 
 The stack checks six streams: two healthy, one slow (big inter-frame gaps, the occasional
 `insufficient_frames`), one with empty payloads (`validation_failed`), one that opens and never

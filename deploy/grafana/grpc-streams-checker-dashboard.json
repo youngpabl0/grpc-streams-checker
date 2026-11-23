@@ -674,7 +674,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (result) (increase(grpc_stream_check_total{stream=~\"$stream\"}[1m]))",
+          "expr": "sum by (result) (increase(grpc_stream_check_total{stream=~\"$stream\"}[$__interval]))",
           "legendFormat": "{{result}}",
           "refId": "A",
           "range": true
@@ -794,7 +794,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "1m"
     },
     {
       "id": 10,
@@ -817,7 +818,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (stream, code) (increase(grpc_stream_error_total{stream=~\"$stream\"}[1m]))",
+          "expr": "sum by (stream, code) (increase(grpc_stream_error_total{stream=~\"$stream\"}[$__interval]))",
           "legendFormat": "{{stream}} {{code}}",
           "refId": "A",
           "range": true
@@ -861,7 +862,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "1m"
     },
     {
       "id": 11,
@@ -884,7 +886,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (stream, rule) (increase(grpc_stream_validation_fail_total{stream=~\"$stream\"}[1m]))",
+          "expr": "sum by (stream, rule) (increase(grpc_stream_validation_fail_total{stream=~\"$stream\"}[$__interval]))",
           "legendFormat": "{{stream}} {{rule}}",
           "refId": "A",
           "range": true
@@ -928,7 +930,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "1m"
     },
     {
       "id": 12,
