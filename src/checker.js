@@ -9,11 +9,16 @@ const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
 const { buildMetadata } = require('./auth');
 const { validateFrame } = require('./validate');
+const { resolveViaReflection } = require('./reflection');
 
 // Proto definitions are parsed once per (proto, includeDirs) and cached across checks.
 const packageCache = new Map();
 
-function loadService(streamDef, includeDirs) {
+// Descriptors fetched through server reflection, cached per (address, TLS, service).
+// The value is a Promise so concurrent checks of one service share one lookup.
+const reflectionCache = new Map();
+
+function loadFromProto(streamDef, includeDirs) {
   const cacheKey = `${streamDef.proto}::${(includeDirs || []).join(',')}`;
   let packageDef = packageCache.get(cacheKey);
   if (!packageDef) {
@@ -28,10 +33,46 @@ function loadService(streamDef, includeDirs) {
     });
     packageCache.set(cacheKey, packageDef);
   }
+  return packageDef;
+}
+
+function reflectionKey(target, useTls, fqService) {
+  return `${target}|${useTls ? 'tls' : 'plain'}|${fqService}`;
+}
+
+function loadFromReflection(streamDef, target, useTls, creds, opts) {
+  const fqService = `${streamDef.package}.${streamDef.service}`;
+  const key = reflectionKey(target, useTls, fqService);
+  let pending = reflectionCache.get(key);
+  if (!pending) {
+    pending = resolveViaReflection({
+      target,
+      creds,
+      symbol: fqService,
+      metadata: buildMetadata(opts.auth),
+      timeoutMs: opts.timeoutMs,
+    });
+    reflectionCache.set(key, pending);
+    // a failed lookup is not cached: the next run asks the server again
+    pending.catch(() => { if (reflectionCache.get(key) === pending) reflectionCache.delete(key); });
+  }
+  return pending;
+}
+
+/** Forget every descriptor fetched through reflection (tests, config reloads). */
+function clearReflectionCache() {
+  reflectionCache.clear();
+}
+
+async function loadService(streamDef, ctx) {
+  const packageDef = streamDef.reflection
+    ? await loadFromReflection(streamDef, ctx.target, ctx.useTls, ctx.creds, ctx.opts)
+    : loadFromProto(streamDef, ctx.opts.includeDirs);
   const root = grpc.loadPackageDefinition(packageDef);
   const ServiceCtor = resolve(root, `${streamDef.package}.${streamDef.service}`);
   if (typeof ServiceCtor !== 'function') {
-    throw new Error(`service "${streamDef.package}.${streamDef.service}" not found in ${streamDef.proto}`);
+    const source = streamDef.reflection ? `server reflection at ${ctx.target}` : streamDef.proto;
+    throw new Error(`service "${streamDef.package}.${streamDef.service}" not found in ${source}`);
   }
   return ServiceCtor;
 }
@@ -50,6 +91,9 @@ function resolve(obj, dotted) {
  * Never rejects — always resolves to a structured result so one bad stream
  * cannot take down the whole run.
  *
+ * The schema comes from `streamDef.proto` or, with `streamDef.reflection`,
+ * from the server reflection API of the target (cached per address).
+ *
  * @param {object} streamDef stream definition from config
  * @param {object} opts { addr, tls, timeoutMs, minFrames, auth, includeDirs }
  * @return {Promise<{
@@ -59,22 +103,31 @@ function resolve(obj, dotted) {
  * }>}
  */
 function checkStream(streamDef, opts) {
+  const target = streamDef.addr || opts.addr;
+  const useTls = streamDef.tls !== undefined ? streamDef.tls : opts.tls;
+  const creds = useTls ? grpc.credentials.createSsl() : grpc.credentials.createInsecure();
+  const ctx = { target, useTls, creds, opts };
+
+  return loadService(streamDef, ctx).then(
+    (ServiceCtor) => runStream(ServiceCtor, streamDef, ctx),
+    (err) => ({
+      result: 'error', firstFrameMs: 0, maxGapMs: 0, frames: 0,
+      code: err.code !== undefined && grpc.status[err.code] ? grpc.status[err.code] : null,
+      error: err.message, failedRule: null,
+    }),
+  ).then((out) => {
+    // A server redeployed with a changed schema gets re-resolved on the next run.
+    if (streamDef.reflection && out.result === 'error') {
+      reflectionCache.delete(reflectionKey(target, useTls, `${streamDef.package}.${streamDef.service}`));
+    }
+    return out;
+  });
+}
+
+function runStream(ServiceCtor, streamDef, ctx) {
+  const { target, creds, opts } = ctx;
   return new Promise((resolvePromise) => {
     const minFrames = streamDef.minFrames || opts.minFrames || 1;
-
-    let ServiceCtor;
-    try {
-      ServiceCtor = loadService(streamDef, opts.includeDirs);
-    } catch (err) {
-      return resolvePromise({
-        result: 'error', firstFrameMs: 0, maxGapMs: 0, frames: 0,
-        code: null, error: err.message, failedRule: null,
-      });
-    }
-
-    const target = streamDef.addr || opts.addr;
-    const useTls = streamDef.tls !== undefined ? streamDef.tls : opts.tls;
-    const creds = useTls ? grpc.credentials.createSsl() : grpc.credentials.createInsecure();
     const clientInstance = new ServiceCtor(target, creds);
 
     const startedNs = process.hrtime.bigint();
@@ -147,4 +200,4 @@ function checkStream(streamDef, opts) {
   });
 }
 
-module.exports = { checkStream };
+module.exports = { checkStream, clearReflectionCache };

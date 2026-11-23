@@ -1,0 +1,19 @@
+// Copyright 2026 Daniil Romashov
+// SPDX-License-Identifier: Apache-2.0
+
+syntax = "proto3";
+
+package test.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message TickRequest {
+  string mode = 1;
+}
+
+message Tick {
+  google.protobuf.Timestamp at = 1; // protobuf Timestamp
+  string iso = 2;                   // RFC3339 string
+  int64 epoch_ms = 3;               // epoch milliseconds (int64 arrives as a string)
+  double epoch_s = 4;               // epoch seconds
+}

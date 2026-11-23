@@ -7,7 +7,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const REQUIRED_STREAM_FIELDS = ['name', 'proto', 'package', 'service', 'method'];
+// `proto` is required unless the stream resolves its schema through server reflection.
+const REQUIRED_STREAM_FIELDS = ['name', 'package', 'service', 'method'];
 
 /**
  * Load and validate the checker config. Fails fast with a precise message —
@@ -51,6 +52,15 @@ function loadConfig(configPath, env = process.env) {
     const tag = s.name ? `stream "${s.name}"` : `streams[${i}]`;
     for (const field of REQUIRED_STREAM_FIELDS) {
       if (!s[field]) problems.push(`${tag}: missing required field "${field}"`);
+    }
+    if (s.reflection !== undefined && typeof s.reflection !== 'boolean') {
+      problems.push(`${tag}: "reflection" must be true or false`);
+    }
+    if (s.reflection === true && s.proto) {
+      problems.push(`${tag}: set either "proto" or "reflection": true, not both`);
+    }
+    if (!s.reflection && !s.proto) {
+      problems.push(`${tag}: missing required field "proto" (or set "reflection": true to load the schema from the server)`);
     }
     if (s.name) {
       if (seen.has(s.name)) problems.push(`duplicate stream name "${s.name}" — metric series would collide`);

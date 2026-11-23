@@ -1,0 +1,16 @@
+// Copyright 2026 Daniil Romashov
+// SPDX-License-Identifier: Apache-2.0
+//
+// Test fixture: a streaming service whose message lives in an imported file,
+// which itself imports a well-known type. Exercises transitive descriptor
+// resolution over server reflection and timestamp parsing for freshness.
+
+syntax = "proto3";
+
+package test.v1;
+
+import "common/clock_types.proto";
+
+service ClockService {
+  rpc Ticks(TickRequest) returns (stream Tick);
+}

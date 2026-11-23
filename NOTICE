@@ -5,3 +5,8 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License in the accompanying LICENSE file
 or at http://www.apache.org/licenses/LICENSE-2.0
+
+This product includes src/proto/grpc/reflection/v1/reflection.proto and
+src/proto/grpc/reflection/v1alpha/reflection.proto from the gRPC project
+(https://github.com/grpc/grpc), Copyright 2016 The gRPC Authors, licensed
+under the Apache License, Version 2.0.

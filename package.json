@@ -39,7 +39,9 @@
     "prom-client": "^15.1.0"
   },
   "devDependencies": {
+    "@grpc/reflection": "^1.0.4",
     "eslint": "^8.57.0",
-    "pino-pretty": "^11.0.0"
+    "pino-pretty": "^11.0.0",
+    "protobufjs": "^7.6.6"
   }
 }

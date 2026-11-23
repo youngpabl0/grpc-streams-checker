@@ -83,3 +83,35 @@ test('no addr anywhere -> rejected', () => {
     /no addr/,
   );
 });
+
+test('reflection: true makes "proto" optional', () => {
+  const s = { ...validStream, reflection: true };
+  delete s.proto;
+  const cfg = loadConfig(tmpConfig({ addr: 'x:1', streams: [s] }), {});
+  assert.equal(cfg.streams[0].reflection, true);
+});
+
+test('neither proto nor reflection -> rejected with a hint', () => {
+  const s = { ...validStream };
+  delete s.proto;
+  assert.throws(
+    () => loadConfig(tmpConfig({ addr: 'x:1', streams: [s] }), {}),
+    /missing required field "proto" \(or set "reflection": true/,
+  );
+});
+
+test('both proto and reflection -> rejected as ambiguous', () => {
+  assert.throws(
+    () => loadConfig(tmpConfig({ addr: 'x:1', streams: [{ ...validStream, reflection: true }] }), {}),
+    /either "proto" or "reflection"/,
+  );
+});
+
+test('non-boolean reflection -> rejected', () => {
+  const s = { ...validStream, reflection: 'yes' };
+  delete s.proto;
+  assert.throws(
+    () => loadConfig(tmpConfig({ addr: 'x:1', streams: [s] }), {}),
+    /"reflection" must be true or false/,
+  );
+});

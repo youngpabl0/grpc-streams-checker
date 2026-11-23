@@ -20,6 +20,8 @@
  *   --jitter=300  add a random 0..N ms to every frame delay
  *   --cycle=120   rotate through normal, slow, broken, silent, error,
  *                 spending N seconds in each phase (failures and recoveries)
+ *   --reflection  also serve the gRPC server reflection API (v1 and v1alpha),
+ *                 so a stream config can use "reflection": true instead of a .proto
  */
 'use strict';
 
@@ -44,6 +46,7 @@ const delayMs = flag('slow') ? Number(flag('slow')) : 200;
 const jitterMs = Number(flag('jitter') || 0);
 const port = Number(flag('port') || 50051);
 const cycleSeconds = Number(flag('cycle') || 0);
+const reflection = process.argv.includes('--reflection');
 
 const CYCLE = ['normal', 'slow', 'broken', 'silent', 'error'];
 const startedAt = Date.now();
@@ -93,6 +96,11 @@ function priceStream(call) {
 
 const server = new grpc.Server();
 server.addService(proto.example.v1.PriceService.service, { PriceStream: priceStream });
+if (reflection) {
+  // required lazily: @grpc/reflection is a dev dependency, only this flag needs it
+  const { ReflectionService } = require('@grpc/reflection');
+  new ReflectionService(packageDef).addToServer(server);
+}
 server.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), (err) => {
   if (err) { console.error(err); process.exit(1); }
   let mode;
@@ -101,5 +109,5 @@ server.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), (er
   else if (broken) mode = 'broken';
   else if (errorCode) mode = `error ${errorCode}`;
   else mode = `normal (frame every ${delayMs}ms${jitterMs ? `, up to ${jitterMs}ms jitter` : ''})`;
-  console.log(`demo PriceService on :${port}, mode: ${mode}`);
+  console.log(`demo PriceService on :${port}, mode: ${mode}${reflection ? ', reflection on' : ''}`);
 });

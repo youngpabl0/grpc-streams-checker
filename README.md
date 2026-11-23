@@ -37,6 +37,7 @@ frames, and checks what's inside them.** That's exactly what this checker is.
 For every stream in your config, on every run, the checker:
 
 1. **loads the `.proto` at runtime** (no codegen, no stale stubs — add a stream by pointing at a file);
+   or, with `"reflection": true`, **fetches the schema from the server** through gRPC server reflection;
 2. **opens the server-side streaming RPC** as a real client (TLS or plaintext, optional auth metadata);
 3. **collects `minFrames` frames** (default 1; set 3–5 to verify *sustained* flow, not just a first burp)
    within the time budget, measuring time-to-first-frame and the largest inter-frame gap;
@@ -145,6 +146,41 @@ the variable at the top).
 }
 ```
 
+### Server reflection (no `.proto` files)
+
+If the server exposes the [gRPC server reflection API](https://github.com/grpc/grpc/blob/master/doc/server-reflection.md),
+a stream can drop `proto` and ask the server for its schema instead:
+
+```json
+{
+  "name": "price_stream",
+  "reflection": true,
+  "package": "example.v1",
+  "service": "PriceService",
+  "method": "PriceStream",
+  "request": { "symbol": "BTCUSD" }
+}
+```
+
+- The checker asks for the file that declares `package.service`, then for every file it imports,
+  over `grpc.reflection.v1`; servers that only implement the older `grpc.reflection.v1alpha` are
+  handled by a fallback. Well-known types (`google/protobuf/*.proto`) the server does not serve are
+  taken from the bundled copies.
+- The reflection call uses the stream's own target, TLS setting and `auth` metadata.
+- Descriptors are cached per address (target, TLS on/off, service), so reflection runs once, not on
+  every check. After a check that ends in `error` the entry is dropped and the next run asks the
+  server again, which picks up a redeployed server with a changed schema.
+- If the server has no reflection service the check ends with `result="error"`, `code="UNIMPLEMENTED"`
+  and a message naming both API versions it tried; a service the server does not know ends with
+  `result="error"` and the service name in the message.
+- Set either `proto` or `"reflection": true` on a stream, not both.
+
+Try it against the demo server:
+
+```bash
+node examples/demo-server.js --reflection   # PriceService + reflection (v1 and v1alpha)
+```
+
 Environment overrides: `CONFIG`, `ADDR`, `DC`, `PORT` (default 4777), `TIMEOUT_MS`,
 `INTERVAL_SECONDS`, `MIN_FRAMES`, `LOG_LEVEL`, `LOG_PRETTY=true`.
 
@@ -153,7 +189,7 @@ For auth beyond a bearer token (minted JWTs, AWS SigV4, mTLS) extend the single 
 
 ## Supplying your `.proto` files
 
-The checker consumes plain `.proto` **source files at runtime** — you never compile stubs. Three
+The checker consumes plain `.proto` **source files at runtime**: you never compile stubs. Four
 common ways to get them next to the checker:
 
 1. **Copy them in** — drop the files into `protos/` in your deployment and reference
@@ -164,6 +200,8 @@ common ways to get them next to the checker:
    contract version you pinned — bump the submodule to test a new contract.
 3. **Bake into the image** — in your own Dockerfile layer, `COPY protos/ /app/protos/`, or at
    runtime mount them: `-v $PWD/protos:/app/protos:ro`.
+4. **Skip the files**: if the server runs gRPC server reflection, set `"reflection": true` on the
+   stream and leave `proto` out (see [Server reflection](#server-reflection-no-proto-files)).
 
 Google well-known types (`google/protobuf/*.proto`) ship with `protobufjs` and resolve
 automatically; you only need `protoIncludeDirs` for *your* shared imports.
