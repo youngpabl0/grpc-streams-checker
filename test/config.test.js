@@ -115,3 +115,23 @@ test('non-boolean reflection -> rejected', () => {
     /"reflection" must be true or false/,
   );
 });
+
+test('freshness rule is accepted when well-formed', () => {
+  const s = { ...validStream, freshness: { field: 'ts', maxAgeSeconds: 10, unit: 'ms' } };
+  const cfg = loadConfig(tmpConfig({ addr: 'x:1', streams: [s] }), {});
+  assert.deepEqual(cfg.streams[0].freshness, { field: 'ts', maxAgeSeconds: 10, unit: 'ms' });
+});
+
+test('malformed freshness rules -> each problem named', () => {
+  const s = { ...validStream, freshness: { field: '', maxAgeSeconds: 0, unit: 'minutes' } };
+  assert.throws(
+    () => loadConfig(tmpConfig({ addr: 'x:1', streams: [s] }), {}),
+    (err) => /freshness\.field/.test(err.message)
+      && /freshness\.maxAgeSeconds/.test(err.message)
+      && /freshness\.unit must be one of s, ms, us, ns/.test(err.message),
+  );
+  assert.throws(
+    () => loadConfig(tmpConfig({ addr: 'x:1', streams: [{ ...validStream, freshness: 10 }] }), {}),
+    /"freshness" must be an object/,
+  );
+});

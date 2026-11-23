@@ -25,7 +25,8 @@
       "expect": {
         "fields": ["symbol", "price", "ts"],
         "match": { "symbol": "BTCUSD" }
-      }
+      },
+      "freshness": { "field": "ts", "maxAgeSeconds": 10 }
     },
     {
       "name": "price_stream_other_dc",

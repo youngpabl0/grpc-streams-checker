@@ -42,10 +42,11 @@ For every stream in your config, on every run, the checker:
 3. **collects `minFrames` frames** (default 1; set 3–5 to verify *sustained* flow, not just a first burp)
    within the time budget, measuring time-to-first-frame and the largest inter-frame gap;
 4. **validates every frame's payload** against your rules — required fields, exact matches, regexes;
+   with a `freshness` rule it also checks that the timestamp inside each frame is recent;
 5. **cancels the stream** and writes the outcome to Prometheus metrics.
 
 One bad stream never fails the run; every failure mode gets its own result label:
-`ok` · `timeout` · `insufficient_frames` · `validation_failed` · `error` (with the gRPC status code).
+`ok` · `timeout` · `insufficient_frames` · `validation_failed` · `stale` · `error` (with the gRPC status code).
 
 ## What it looks like in production
 
@@ -75,6 +76,7 @@ Now break it and watch the checker notice:
 node examples/demo-server.js --silent    # stream opens, no frames  → result: timeout
 node examples/demo-server.js --broken    # frames with empty fields → result: validation_failed
 node examples/demo-server.js --slow=2000 # sluggish producer        → max_inter_frame_ms grows
+node examples/demo-server.js --stale     # same cached tick forever → result: stale
 node examples/demo-server.js --error=UNAVAILABLE # stream fails with a status → result: error
 ```
 
@@ -140,11 +142,44 @@ the variable at the top).
         "fields": ["symbol", "price", "ts"],      // must exist & be non-empty
         "match": { "symbol": "BTCUSD" }           // exact match…
         // "match": { "symbol": "/^BTC/" }        // …or /regex/
+      },
+      "freshness": {                       // optional: data must be recent
+        "field": "ts",                     // dotted path to the frame's timestamp
+        "maxAgeSeconds": 10                // older than this -> result: stale
+        // "unit": "ms"                    // only for epoch numbers; guessed if omitted
       }
     }
   ]
 }
 ```
+
+### Data freshness
+
+A stream can stay open, deliver frames on time and pass payload validation while serving data that
+stopped changing: a producer that replays its cache, or a backend whose upstream feed froze and
+keeps re-sending the last value. A `freshness` rule compares the timestamp inside each frame with
+the checker's clock:
+
+```json
+"freshness": { "field": "ts", "maxAgeSeconds": 10 }
+```
+
+- `field` is a dotted path into the frame (`"ts"`, `"meta.updated_at"`). Accepted values: epoch
+  numbers or numeric strings in seconds, milliseconds, microseconds or nanoseconds (the unit is
+  guessed from the magnitude, or set `"unit": "s" | "ms" | "us" | "ns"`), RFC 3339 strings
+  (`"2026-11-23T10:00:00.123Z"`, `"...+07:00"`) and `google.protobuf.Timestamp` messages.
+- A frame older than `maxAgeSeconds` ends the check with `result="stale"` (and `grpc_stream_up` 0).
+- A missing or unparsable timestamp ends it with `result="validation_failed"` and
+  `rule="invalid_timestamp"`.
+- `grpc_stream_data_age_seconds` reports the largest data age seen in the last check, so you can
+  graph how far behind a stream is even while it is still under the limit.
+- The age is measured against the checker's clock: keep NTP running on both sides and leave a few
+  seconds of slack in `maxAgeSeconds`. A timestamp slightly in the future gives a negative age and
+  passes.
+
+Try it: `node examples/demo-server.js --stale` keeps sending one cached tick stamped a minute before
+the server started; the `price_stream` in `streams.example.json` has a 10-second freshness rule and
+reports `stale`. The alert `GrpcStreamDataStale` fires on repeated stale checks.
 
 ### Server reflection (no `.proto` files)
 
@@ -222,21 +257,22 @@ sum by (method) (rate(grpc_stream_check_total[5m]))
 | Metric | Type | Meaning |
 |---|---|---|
 | `grpc_stream_up` | gauge | 1 = last check passed (frames arrived **and** payloads valid) |
-| `grpc_stream_check_total{result}` | counter | checks by outcome: `ok`/`timeout`/`insufficient_frames`/`validation_failed`/`error` |
+| `grpc_stream_check_total{result}` | counter | checks by outcome: `ok`/`timeout`/`insufficient_frames`/`validation_failed`/`stale`/`error` |
 | `grpc_stream_error_total{code}` | counter | failures by gRPC status code (`UNAVAILABLE`, `DEADLINE_EXCEEDED`, …) |
 | `grpc_stream_first_frame_ms` | gauge | time to first frame, last check |
 | `grpc_stream_first_frame_duration_seconds` | histogram | same, for percentiles over time |
 | `grpc_stream_max_inter_frame_ms` | gauge | worst gap between frames within a check — sustained-flow health |
 | `grpc_stream_frames_last_check` | gauge | frames received in the last check |
 | `grpc_stream_frames_total` | counter | frames received, ever |
-| `grpc_stream_validation_fail_total{rule}` | counter | payload failures: `missing_field`/`mismatch`/`empty_frame` |
+| `grpc_stream_validation_fail_total{rule}` | counter | payload failures: `missing_field`/`mismatch`/`empty_frame`/`invalid_timestamp` |
+| `grpc_stream_data_age_seconds` | gauge | largest age of the data in the frames of the last check (streams with a `freshness` rule) |
 | `grpc_stream_last_success_timestamp_seconds` | gauge | when this stream last fully passed |
 | `grpc_stream_last_run_timestamp_seconds` | gauge | when the checker last completed a run |
 
 ## Alerting
 
 Ready-made Prometheus rules ship in
-[`alerts/grpc-streams-checker.rules.yml`](alerts/grpc-streams-checker.rules.yml) — eight alerts with
+[`alerts/grpc-streams-checker.rules.yml`](alerts/grpc-streams-checker.rules.yml): nine alerts with
 severities, `for:` windows, and runbook-style descriptions, copy-paste compatible with plain
 Prometheus `rule_files:` and with a prometheus-operator `PrometheusRule`. Highlights:
 
@@ -246,6 +282,7 @@ Prometheus `rule_files:` and with a prometheus-operator `PrometheusRule`. Highli
 | `GrpcStreamFirstFrameSlow` | first frame > 2s for 5m — degrading before dark | warning |
 | `GrpcStreamStuttering` | inter-frame gap > 5s — producer not keeping up | warning |
 | `GrpcStreamPayloadInvalid` | validation failures — data went bad after a deploy | critical |
+| `GrpcStreamDataStale` | checks keep finding frames older than the freshness limit | critical |
 | `GrpcStreamErrors` | repeated gRPC errors by status code | warning |
 | `GrpcStreamNoRecentSuccess` | nothing fully green in 5m | critical |
 | `GrpcStreamsCheckerDead` | the checker itself stopped — silence ≠ health | critical |

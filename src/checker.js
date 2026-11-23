@@ -10,6 +10,7 @@ const protoLoader = require('@grpc/proto-loader');
 const { buildMetadata } = require('./auth');
 const { validateFrame } = require('./validate');
 const { resolveViaReflection } = require('./reflection');
+const { checkFreshness } = require('./freshness');
 
 // Proto definitions are parsed once per (proto, includeDirs) and cached across checks.
 const packageCache = new Map();
@@ -97,9 +98,10 @@ function resolve(obj, dotted) {
  * @param {object} streamDef stream definition from config
  * @param {object} opts { addr, tls, timeoutMs, minFrames, auth, includeDirs }
  * @return {Promise<{
- *   result: 'ok'|'timeout'|'insufficient_frames'|'validation_failed'|'error',
+ *   result: 'ok'|'timeout'|'insufficient_frames'|'validation_failed'|'stale'|'error',
  *   firstFrameMs: number, maxGapMs: number, frames: number,
- *   code: ?string, error: ?string, failedRule: ?string
+ *   code: ?string, error: ?string, failedRule: ?string,
+ *   dataAgeSeconds: ?number  (largest data age seen, only with streamDef.freshness)
  * }>}
  */
 function checkStream(streamDef, opts) {
@@ -113,7 +115,7 @@ function checkStream(streamDef, opts) {
     (err) => ({
       result: 'error', firstFrameMs: 0, maxGapMs: 0, frames: 0,
       code: err.code !== undefined && grpc.status[err.code] ? grpc.status[err.code] : null,
-      error: err.message, failedRule: null,
+      error: err.message, failedRule: null, dataAgeSeconds: null,
     }),
   ).then((out) => {
     // A server redeployed with a changed schema gets re-resolved on the next run.
@@ -135,6 +137,7 @@ function runStream(ServiceCtor, streamDef, ctx) {
     let firstFrameMs = 0;
     let maxGapMs = 0;
     let frames = 0;
+    let dataAgeSeconds = null;
     let settled = false;
     let call;
 
@@ -155,6 +158,7 @@ function runStream(ServiceCtor, streamDef, ctx) {
       code: err && err.code !== undefined ? (grpc.status[err.code] || String(err.code)) : null,
       error: err ? (err.message || String(err)) : null,
       failedRule: rule || null,
+      dataAgeSeconds,
     });
 
     const timer = setTimeout(() => {
@@ -187,9 +191,18 @@ function runStream(ServiceCtor, streamDef, ctx) {
       const verdict = validateFrame(frame, streamDef.expect);
       if (!verdict.ok) return fail('validation_failed', new Error(verdict.detail), verdict.rule);
 
+      // Freshness: a stream that keeps pushing cached data passes every other check.
+      if (streamDef.freshness) {
+        const fresh = checkFreshness(frame, streamDef.freshness);
+        if (fresh.ageSeconds !== null) {
+          dataAgeSeconds = dataAgeSeconds === null ? fresh.ageSeconds : Math.max(dataAgeSeconds, fresh.ageSeconds);
+        }
+        if (!fresh.ok) return fail(fresh.result, new Error(fresh.detail), fresh.rule);
+      }
+
       if (frames >= minFrames) {
         finish({
-          result: 'ok', firstFrameMs, maxGapMs, frames, code: null, error: null, failedRule: null,
+          result: 'ok', firstFrameMs, maxGapMs, frames, code: null, error: null, failedRule: null, dataAgeSeconds,
         });
       }
     });

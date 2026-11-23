@@ -53,4 +53,4 @@ function dig(obj, dotted) {
   return dotted.split('.').reduce((node, key) => (node == null ? undefined : node[key]), obj);
 }
 
-module.exports = { validateFrame };
+module.exports = { validateFrame, dig };

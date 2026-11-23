@@ -19,10 +19,10 @@ const up = new client.Gauge({
   registers: [register],
 });
 
-// Every check by outcome: ok | timeout | insufficient_frames | validation_failed | error.
+// Every check by outcome: ok | timeout | insufficient_frames | validation_failed | stale | error.
 const checkTotal = new client.Counter({
   name: 'grpc_stream_check_total',
-  help: 'Total stream checks, by result (ok|timeout|insufficient_frames|validation_failed|error).',
+  help: 'Total stream checks, by result (ok|timeout|insufficient_frames|validation_failed|stale|error).',
   labelNames: ['stream', 'method', 'addr', 'dc', 'result'],
   registers: [register],
 });
@@ -80,11 +80,20 @@ const framesTotal = new client.Counter({
   registers: [register],
 });
 
-// Payload validation failures, by rule (missing_field|mismatch|empty_frame).
+// Payload validation failures, by rule (missing_field|mismatch|empty_frame|invalid_timestamp).
 const validationFailTotal = new client.Counter({
   name: 'grpc_stream_validation_fail_total',
   help: 'Frames that failed payload validation, by rule.',
   labelNames: ['stream', 'method', 'addr', 'dc', 'rule'],
+  registers: [register],
+});
+
+// Age of the data inside the frames (now minus the frame's own timestamp), for
+// streams with a `freshness` rule. Catches a stream that keeps pushing cached data.
+const dataAgeSeconds = new client.Gauge({
+  name: 'grpc_stream_data_age_seconds',
+  help: 'Largest age of the data in the frames of the last check (now minus the frame timestamp), for streams with a freshness rule.',
+  labelNames: ['stream', 'method', 'addr', 'dc'],
   registers: [register],
 });
 
@@ -117,6 +126,7 @@ module.exports = {
   framesLastCheck,
   framesTotal,
   validationFailTotal,
+  dataAgeSeconds,
   lastSuccess,
   lastRun,
 };

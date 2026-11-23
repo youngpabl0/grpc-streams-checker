@@ -13,6 +13,7 @@
  *   --silent      open the stream but never send a frame  -> result: timeout
  *   --broken      send frames with missing fields         -> result: validation_failed
  *   --slow=2000   delay between frames, ms                -> watch max_inter_frame_ms
+ *   --stale       keep sending one cached tick, 60s old    -> result: stale (with a freshness rule)
  *   --error=UNAVAILABLE   end every stream with this gRPC status -> result: error{code}
  *
  * Extra knobs (used by the docker-compose demo stack):
@@ -41,6 +42,7 @@ function flag(name) {
 
 const silent = process.argv.includes('--silent');
 const broken = process.argv.includes('--broken');
+const stale = process.argv.includes('--stale');
 const errorCode = flag('error');
 const delayMs = flag('slow') ? Number(flag('slow')) : 200;
 const jitterMs = Number(flag('jitter') || 0);
@@ -59,6 +61,7 @@ function currentMode() {
   }
   if (silent) return 'silent';
   if (broken) return 'broken';
+  if (stale) return 'stale';
   if (errorCode) return 'error';
   return 'normal';
 }
@@ -82,6 +85,9 @@ function priceStream(call) {
     timer = setTimeout(() => {
       if (mode === 'broken') {
         call.write({ symbol: '', price: 0, ts: 0 }); // fails "fields" validation
+      } else if (mode === 'stale') {
+        // the same snapshot over and over: frames flow, payloads are valid, data is old
+        call.write({ symbol, price: 50123.45, ts: startedAt - 60000 });
       } else {
         call.write({ symbol, price: 50000 + Math.random() * 1000, ts: Date.now() });
       }
@@ -107,6 +113,7 @@ server.bindAsync(`0.0.0.0:${port}`, grpc.ServerCredentials.createInsecure(), (er
   if (cycleSeconds > 0) mode = `cycle (${CYCLE.join(' > ')}, ${cycleSeconds}s each)`;
   else if (silent) mode = 'silent';
   else if (broken) mode = 'broken';
+  else if (stale) mode = 'stale (cached tick, 60s old)';
   else if (errorCode) mode = `error ${errorCode}`;
   else mode = `normal (frame every ${delayMs}ms${jitterMs ? `, up to ${jitterMs}ms jitter` : ''})`;
   console.log(`demo PriceService on :${port}, mode: ${mode}${reflection ? ', reflection on' : ''}`);

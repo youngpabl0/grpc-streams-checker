@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { UNITS } = require('./freshness');
 
 // `proto` is required unless the stream resolves its schema through server reflection.
 const REQUIRED_STREAM_FIELDS = ['name', 'package', 'service', 'method'];
@@ -58,6 +59,20 @@ function loadConfig(configPath, env = process.env) {
     }
     if (s.reflection === true && s.proto) {
       problems.push(`${tag}: set either "proto" or "reflection": true, not both`);
+    }
+    if (s.freshness !== undefined) {
+      const f = s.freshness;
+      if (!f || typeof f !== 'object' || Array.isArray(f)) {
+        problems.push(`${tag}: "freshness" must be an object like { "field": "ts", "maxAgeSeconds": 10 }`);
+      } else {
+        if (typeof f.field !== 'string' || !f.field) problems.push(`${tag}: freshness.field must be a non-empty string`);
+        if (typeof f.maxAgeSeconds !== 'number' || !(f.maxAgeSeconds > 0)) {
+          problems.push(`${tag}: freshness.maxAgeSeconds must be a positive number`);
+        }
+        if (f.unit !== undefined && !UNITS.includes(f.unit)) {
+          problems.push(`${tag}: freshness.unit must be one of ${UNITS.join(', ')}`);
+        }
+      }
     }
     if (!s.reflection && !s.proto) {
       problems.push(`${tag}: missing required field "proto" (or set "reflection": true to load the schema from the server)`);

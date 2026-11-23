@@ -60,6 +60,9 @@ async function runOnce(cfg) {
       }
       metrics.framesLastCheck.set(labels, out.frames);
       if (out.frames > 1) metrics.maxInterFrameMs.set(labels, out.maxGapMs);
+      if (out.dataAgeSeconds !== null && out.dataAgeSeconds !== undefined) {
+        metrics.dataAgeSeconds.set(labels, out.dataAgeSeconds);
+      }
       if (out.result === 'ok') metrics.lastSuccess.set(labels, Math.floor(Date.now() / 1000));
 
       const line = {
@@ -68,6 +71,8 @@ async function runOnce(cfg) {
         frames: out.frames,
         firstFrameMs: Math.round(out.firstFrameMs),
         maxGapMs: Math.round(out.maxGapMs),
+        dataAgeSeconds: out.dataAgeSeconds === null || out.dataAgeSeconds === undefined
+          ? undefined : Math.round(out.dataAgeSeconds * 10) / 10,
         code: out.code,
         error: out.error,
       };
