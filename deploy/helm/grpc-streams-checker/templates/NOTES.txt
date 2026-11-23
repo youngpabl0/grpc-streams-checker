@@ -1,0 +1,12 @@
+grpc-streams-checker is running in {{ .Release.Namespace }}.
+
+Metrics:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "grpc-streams-checker.fullname" . }} {{ .Values.service.port }}
+  curl -s localhost:{{ .Values.service.port }}/metrics | grep '^grpc_stream_'
+
+Check results in the logs:
+  kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "grpc-streams-checker.fullname" . }} -f
+{{- if not .Values.serviceMonitor.enabled }}
+
+prometheus-operator users: --set serviceMonitor.enabled=true,prometheusRule.enabled=true
+{{- end }}

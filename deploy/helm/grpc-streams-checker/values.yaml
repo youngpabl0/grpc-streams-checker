@@ -1,0 +1,142 @@
+# Copyright 2026 Daniil Romashov
+# SPDX-License-Identifier: Apache-2.0
+#
+# Default values for grpc-streams-checker. Mirrors deploy/kubernetes/checker.yaml.
+
+replicaCount: 1
+
+image:
+  # Build from the repo Dockerfile and push to your registry, then point this at it.
+  repository: ghcr.io/youngpabl0/grpc-streams-checker
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Contents of streams.json, rendered as JSON into a ConfigMap and mounted at
+# /config/streams.json. Same schema as streams.example.json in the repo.
+# Secrets stay out of here: reference them as ${GRPC_TOKEN} and set the
+# variable through `env` from a Secret.
+config:
+  addr: your-backend.your-namespace.svc.cluster.local:443
+  dc: prod
+  tls: true
+  intervalSeconds: 30
+  firstFrameTimeoutMs: 5000
+  minFrames: 3
+  protoIncludeDirs:
+    - protos
+  streams:
+    - name: price_stream
+      proto: protos/price.proto
+      package: example.v1
+      service: PriceService
+      method: PriceStream
+      request:
+        symbol: BTCUSD
+      expect:
+        fields: [symbol, price, ts]
+      freshness:
+        field: ts
+        maxAgeSeconds: 10
+
+# Use an existing ConfigMap (key "streams.json") instead of `config`.
+existingConfigMap: ""
+
+# .proto files, mounted at /app/protos (the image's working directory is /app,
+# so "proto": "protos/price.proto" in the config resolves). When every stream
+# uses "reflection": true, drop them with `--set protos=null` (Helm merges maps,
+# so an empty map would keep this example file).
+protos:
+  price.proto: |
+    syntax = "proto3";
+    package example.v1;
+    service PriceService {
+      rpc PriceStream(PriceRequest) returns (stream PriceTick);
+    }
+    message PriceRequest { string symbol = 1; }
+    message PriceTick { string symbol = 1; double price = 2; int64 ts = 3; }
+
+# Use an existing ConfigMap with your .proto files instead of `protos`.
+existingProtosConfigMap: ""
+
+# Extra environment variables, e.g. the auth token from a Secret:
+#   env:
+#     - name: GRPC_TOKEN
+#       valueFrom:
+#         secretKeyRef: { name: grpc-streams-checker-auth, key: token }
+env: []
+envFrom: []
+
+# Port of /metrics and /healthz inside the pod.
+metricsPort: 4777
+
+podAnnotations: {}
+podLabels: {}
+
+# Adds prometheus.io/scrape, port and path annotations to the pod for
+# annotation-based scrape setups. Turn off if you use the ServiceMonitor.
+scrapeAnnotations: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  requests:
+    cpu: 25m        # the checker is idle between runs
+    memory: 96Mi
+  limits:
+    cpu: 200m       # headroom for many concurrent streams in one run
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: metrics
+  initialDelaySeconds: 5
+  periodSeconds: 15
+
+readinessProbe:
+  httpGet:
+    path: /metrics
+    port: metrics
+  initialDelaySeconds: 5
+  periodSeconds: 15
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+service:
+  type: ClusterIP
+  port: 4777
+  annotations: {}
+
+# prometheus-operator: scrape the checker through a ServiceMonitor.
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: ""
+  path: /metrics
+  # match your Prometheus's serviceMonitorSelector, e.g. release: kube-prometheus-stack
+  labels: {}
+
+# prometheus-operator: load the shipped alert rules (alerts/ in the repo) as a
+# PrometheusRule. additionalGroups are appended after the shipped groups.
+prometheusRule:
+  enabled: false
+  # match your Prometheus's ruleSelector, e.g. release: kube-prometheus-stack
+  labels: {}
+  additionalGroups: []

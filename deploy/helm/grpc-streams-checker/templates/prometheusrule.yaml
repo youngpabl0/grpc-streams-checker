@@ -1,0 +1,26 @@
+{{- if .Values.prometheusRule.enabled }}
+{{- /*
+files/grpc-streams-checker.rules.yml is a copy of alerts/ in the repo (a test
+keeps the two identical). It is inserted as is, so the alert texts keep their
+layout; additionalGroups are appended after the shipped groups.
+*/}}
+{{- $raw := .Files.Get "files/grpc-streams-checker.rules.yml" }}
+{{- $parsed := $raw | fromYaml }}
+{{- if or (not $parsed) (hasKey $parsed "Error") (not (hasKey $parsed "groups")) }}
+{{- fail "files/grpc-streams-checker.rules.yml is missing or not valid YAML with a groups: key" }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "grpc-streams-checker.fullname" . }}
+  labels:
+    {{- include "grpc-streams-checker.labels" . | nindent 4 }}
+    {{- with .Values.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+{{ $raw | indent 2 }}
+{{- with .Values.prometheusRule.additionalGroups }}
+{{ toYaml . | indent 4 }}
+{{- end }}
+{{- end }}

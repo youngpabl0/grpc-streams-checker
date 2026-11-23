@@ -319,6 +319,60 @@ kubectl apply -f deploy/kubernetes/servicemonitor.yaml
 Auth tokens belong in a `Secret` exposed as an env var (`GRPC_TOKEN`) — the config file references
 it as `${GRPC_TOKEN}`, so no credentials ever live in the ConfigMap.
 
+## Helm
+
+A chart in [`deploy/helm/grpc-streams-checker/`](deploy/helm/grpc-streams-checker/) renders the same
+objects as the plain manifests: ConfigMaps for `streams.json` and the `.proto` files, a Deployment
+with probes, the same resources and hardened securityContext, a Service, and optionally a
+ServiceMonitor and a PrometheusRule carrying the rules from `alerts/`.
+
+```bash
+helm install streams-checker deploy/helm/grpc-streams-checker \
+  --namespace monitoring --create-namespace \
+  --set image.repository=registry.example.com/grpc-streams-checker \
+  -f my-values.yaml
+```
+
+Build the image from the repo `Dockerfile` and push it to your registry first. A minimal
+`my-values.yaml`:
+
+```yaml
+config:                       # rendered as streams.json, same schema as streams.example.json
+  addr: my-backend.prod.svc.cluster.local:443
+  dc: prod
+  streams:
+    - name: price_stream
+      proto: protos/price.proto
+      package: example.v1
+      service: PriceService
+      method: PriceStream
+      request: { symbol: BTCUSD }
+      freshness: { field: ts, maxAgeSeconds: 10 }
+
+protos:                       # mounted at /app/protos; --set protos=null if all streams use reflection
+  price.proto: |
+    syntax = "proto3";
+    ...
+
+env:                          # secrets from a Secret, referenced as ${GRPC_TOKEN} in config.auth
+  - name: GRPC_TOKEN
+    valueFrom:
+      secretKeyRef: { name: grpc-streams-checker-auth, key: token }
+
+serviceMonitor:               # prometheus-operator
+  enabled: true
+  labels: { release: kube-prometheus-stack }
+prometheusRule:
+  enabled: true
+  labels: { release: kube-prometheus-stack }
+```
+
+Other values: `existingConfigMap` / `existingProtosConfigMap` to bring your own ConfigMaps,
+`prometheusRule.additionalGroups` to append your own rule groups, `scrapeAnnotations` for
+annotation-based scraping, plus the usual `resources`, `nodeSelector`, `tolerations`, `affinity`,
+`podAnnotations`, `imagePullSecrets`. Pods roll automatically when the config or the protos change.
+See [`values.yaml`](deploy/helm/grpc-streams-checker/values.yaml) for every key.
+
 ## The pattern generalizes
 
 The same "open it, demand frames, validate payloads" approach works for any long-lived push

@@ -4,7 +4,7 @@
 # Ready-made Prometheus alerting rules for grpc-streams-checker.
 #
 # Drop this file into your Prometheus `rule_files:` (or a PrometheusRule CRD if you
-# run prometheus-operator — the `groups:` block below is copy-paste compatible).
+# run prometheus-operator: the `groups:` block below is copy-paste compatible).
 # Tune the thresholds and `for:` durations to your latency/interval budgets:
 # defaults assume intervalSeconds=30 and paging only after ~2-3 failed checks.
 
@@ -41,7 +41,7 @@ groups:
           summary: 'gRPC stream {{ $labels.stream }} first frame is slow ({{ $value | humanize }}ms)'
           description: >-
             Time-to-first-frame on {{ $labels.stream }} ({{ $labels.dc }}) has been
-            above 2s for 5 minutes — a degrading backend or upstream feed usually
+            above 2s for 5 minutes; a degrading backend or upstream feed usually
             shows up here before the stream stops entirely.
 
       # ------------------------------------------------------------------
@@ -60,7 +60,7 @@ groups:
             alive but not keeping up.
 
       # ------------------------------------------------------------------
-      # Payloads went bad — usually right after a deploy.
+      # Payloads went bad, usually right after a deploy.
       # ------------------------------------------------------------------
       - alert: GrpcStreamPayloadInvalid
         expr: increase(grpc_stream_validation_fail_total[10m]) > 0
@@ -71,7 +71,7 @@ groups:
           description: >-
             Frames on {{ $labels.stream }} ({{ $labels.dc }}) failed payload
             validation ({{ $labels.rule }}) in the last 10 minutes. The stream is
-            up but the data is wrong — correlate with recent deploys.
+            up but the data is wrong; correlate with recent deploys.
 
       # ------------------------------------------------------------------
       # Frames arrive and pass validation, but the data inside them is old:
@@ -109,7 +109,7 @@ groups:
             credentials expired; DEADLINE_EXCEEDED means the call never completed.
 
       # ------------------------------------------------------------------
-      # Nothing green for too long — even if individual checks flap.
+      # Nothing green for too long, even if individual checks flap.
       # ------------------------------------------------------------------
       - alert: GrpcStreamNoRecentSuccess
         expr: time() - grpc_stream_last_success_timestamp_seconds > 300
@@ -122,7 +122,7 @@ groups:
             {{ $labels.stream }} ({{ $labels.dc }}) in over 5 minutes.
 
       # ------------------------------------------------------------------
-      # The checker itself died — silence must never look like health.
+      # The checker itself died: silence must never look like health.
       # ------------------------------------------------------------------
       - alert: GrpcStreamsCheckerDead
         expr: time() - max by (dc) (grpc_stream_last_run_timestamp_seconds) > 120
@@ -132,7 +132,7 @@ groups:
           summary: 'grpc-streams-checker in {{ $labels.dc }} stopped running'
           description: >-
             The checker in {{ $labels.dc }} has not completed a run in 2 minutes.
-            Dead monitoring masquerades as healthy streams — treat as critical.
+            Dead monitoring masquerades as healthy streams; treat as critical.
 
       # ------------------------------------------------------------------
       # A configured stream disappeared from metrics entirely
@@ -146,5 +146,5 @@ groups:
           summary: 'New/changed gRPC stream series: {{ $labels.stream }}'
           description: >-
             Stream series changed in the last 10m ({{ $labels.stream }},
-            {{ $labels.dc }}) — verify config renames did not silently drop an
+            {{ $labels.dc }}); verify config renames did not silently drop an
             old stream from monitoring.

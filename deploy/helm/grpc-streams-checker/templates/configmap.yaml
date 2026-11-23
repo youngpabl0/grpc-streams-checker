@@ -1,0 +1,25 @@
+{{- if not .Values.existingConfigMap }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "grpc-streams-checker.configMapName" . }}
+  labels:
+    {{- include "grpc-streams-checker.labels" . | nindent 4 }}
+data:
+  streams.json: |
+    {{- .Values.config | toPrettyJson | nindent 4 }}
+{{- end }}
+---
+{{- if and .Values.protos (not .Values.existingProtosConfigMap) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "grpc-streams-checker.protosConfigMapName" . }}
+  labels:
+    {{- include "grpc-streams-checker.labels" . | nindent 4 }}
+data:
+  {{- range $file, $content := .Values.protos }}
+  {{ $file }}: |
+    {{- $content | nindent 4 }}
+  {{- end }}
+{{- end }}

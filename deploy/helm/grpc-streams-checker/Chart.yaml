@@ -1,0 +1,19 @@
+# Copyright 2026 Daniil Romashov
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: grpc-streams-checker
+description: Synthetic monitoring for gRPC server-side streams, with Prometheus metrics and ready-made alert rules.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+home: https://github.com/youngpabl0/grpc-streams-checker
+sources:
+  - https://github.com/youngpabl0/grpc-streams-checker
+keywords:
+  - grpc
+  - streaming
+  - synthetic-monitoring
+  - prometheus
+  - observability
+annotations:
+  licenses: Apache-2.0
